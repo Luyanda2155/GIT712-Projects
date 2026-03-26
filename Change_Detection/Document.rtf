@@ -1,0 +1,224 @@
+{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang7177{\fonttbl{\f0\fnil\fcharset0 Calibri;}}
+{\*\generator Riched20 10.0.19041}\viewkind4\uc1 
+\pard\sa200\sl276\slmult1\f0\fs22\lang9 // GIT_712 (GDS) Assignment 1\par
+// Luyanda Ndawonde\par
+// 26403366\par
+// GEE Time Series & Change Detection Analysis\par
+\par
+// --------------------------------SPECIFY STUDY AREA -----------------------------------------------------\par
+\par
+var city = ee.FeatureCollection("projects/ee-luyandandawonde898/assets/Cape_Town");\par
+\par
+//--------------------------------LOAD THE DATA -----------------------------------------------------------\par
+\par
+//Feature collecction\par
+var capetown = ee.FeatureCollection(city);\par
+//Map.addLayer(capetown,\par
+//            \{'color': 'black'\}, 'City of Cape Town');\par
+              \par
+//Date range\par
+var startDate = '2021-01-01';\par
+var endDate = '2021-12-31';\par
+\par
+//----------------------------------CLOUD MASKING----------------------------------------------------------\par
+\par
+function maskS2clouds(image) \{\par
+  var qa = image.select('QA60');\par
+\par
+  var cloudBitMask = 1 << 10;\par
+  var cirrusBitMask = 1 << 11;\par
+\par
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)\par
+      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));\par
+\par
+  return image.updateMask(mask);\par
+\}\par
+\par
+//----------------------------SELECT IMAGE COLLECTION AND VISUALISE----------------------------------------\par
+var dataset = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')\par
+    .filterDate(startDate, endDate)\par
+    .filter(ee.Filter.bounds(capetown))\par
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20))\par
+    .map(maskS2clouds);\par
+\par
+//clip with table boundaries\par
+var clipImageCollection = function(image) \{\par
+    return image.clip(capetown).divide(100000);\par
+\};\par
+\par
+var datasetClipped = dataset.map(clipImageCollection);\par
+var datasetClippedBand = datasetClipped.select(['B8','B4','B3','B12','B11']);\par
+print('Clipped Dataset: ', datasetClipped);\par
+\par
+var visualization = \{\par
+  min: 0.0,\par
+  max: 0.1,\par
+  bands: ['B8', 'B4', 'B3'],\par
+  gamma: 1.4\par
+\};\par
+\par
+Map.centerObject(capetown, 10);\par
+Map.addLayer(datasetClipped, visualization, 'Dataset Clipped');\par
+\par
+\par
+//------------------------------TIME SERIES ANALYSIS-------------------------------------------------------\par
+\par
+// Create a normalized Vegatation index (NDVI):\par
+var computeNDVI = function(datasetClipped) \{\par
+  var nir = datasetClipped.select('B8');\par
+  var red = datasetClipped.select('B4');\par
+  \par
+  var ndvi = nir.subtract(red).divide(nir.add(red)).rename('NDVI');\par
+\par
+  return datasetClipped.addBands(ndvi);\par
+\};\par
+\par
+var datasetNDVI = datasetClipped.map(computeNDVI);\par
+print('NDVI dataset: ', datasetNDVI);\par
+\par
+var ndviParams = \{min: -1, max: 1, palette: ['blue','yellow','green']\};\par
+Map.addLayer(datasetNDVI.select('NDVI'), ndviParams, 'NDVI dataset');\par
+\par
+//--------------------------CREATE INDICES USING BAND MATH CALCULATIONS------------------------------------\par
+\par
+//Create a normalized burn ratio index (NBR):\par
+var computeNBR = function(datasetClipped) \{\par
+  var nbr = datasetClipped.normalizedDifference(['B12','B8']).rename('NBR');\par
+  return datasetClipped.addBands(nbr);\par
+\};\par
+\par
+var datasetNBR = datasetClipped.map(computeNBR);\par
+print ('NBR dataset: ', datasetNBR);\par
+\par
+var nbrParams = \{min: -1, max: 1, palette: ['white','yellow','orange','red','black']\};\par
+Map.addLayer(datasetNBR.select('NBR'), ndviParams, 'NBR dataset');\par
+\par
+//-------------------------------CREATE TIME SRIES CHART---------------------------------------------------\par
+\par
+var sampledPoints = ee.FeatureCollection.randomPoints(\{\par
+  region: capetown,\par
+  points: 25\par
+\});\par
+var NDVIWithTime = datasetNDVI.map(function(image) \{\par
+  var index = image.getString('system:index');  \par
+  var dateString = ee.String(index).slice(0, 8); // Extract YYYYMMDD\par
+  var date = ee.Date.parse('yyyyMMdd', dateString); // Convert to GEE date\par
+  return image.set('system:time_start', date.millis());\par
+\});\par
+var datasetNDVI = NDVIWithTime.select(['NDVI']);\par
+\par
+var ndviChart = ui.Chart.image.series(\{\par
+  imageCollection: datasetNDVI.select('NDVI'),\par
+  region: sampledPoints,\par
+  xProperty: 'system:time_start'\par
+\}).setSeriesNames(['NDVI'])\par
+  .setOptions(\{\par
+        lineWidth: 2,\par
+        colors: ['ff0004'],\par
+        curveType: 'function',\par
+        title: 'NDVI Values for The Western Cape',\par
+        interpolateNulls: true,\par
+        vAxis: \{title: 'Vegetation Index Values', titleTextStyle: \{italic: false, bold: true\}\},\par
+        hAxis: \{title: 'Date', format: 'YYYY-MMM', titleTextStyle: \{italic: false, bold: true\}\}\par
+      \});\par
+print(ndviChart);\par
+\par
+var NBRWithTime = datasetNBR.map(function(image) \{\par
+  var index = image.getString('system:index');  \par
+  var dateString = ee.String(index).slice(0, 8); // Extract YYYYMMDD\par
+  var date = ee.Date.parse('yyyyMMdd', dateString); // Convert to GEE date\par
+  return image.set('system:time_start', date.millis());\par
+\});\par
+var datasetNBR = NBRWithTime.select(['NBR']);\par
+\par
+var nbrChart = ui.Chart.image.series(\{\par
+  imageCollection: datasetNBR.select('NBR'),\par
+  region: capetown,\par
+  scale: 30,\par
+  xProperty: 'system:time_start'\par
+\}).setSeriesNames(['NBR'])\par
+  .setOptions(\{\par
+      lineWidth: 2,\par
+      colors: ['ff0004'],\par
+      curveType: 'function',\par
+      title: 'Burn Monitoring',\par
+      interpolateNulls: true,\par
+      vAxis: \{title: 'NBR Values', titleTextStyle: \{italic: false, bold: true\}\},\par
+      hAxis: \{title: 'Date', format: 'YYYY-MMM', titleTextStyle: \{italic: false, bold: true\}\}\par
+      \});\par
+print(nbrChart)\par
+\par
+// Compute a linear regression model\par
+var linearFit = datasetNBR.reduce(ee.Reducer.linearFit());\par
+\par
+// Extract the slope (trend)\par
+var slope = linearFit.select('scale');\par
+\par
+// Print the trend slope\par
+print('Linear Trend Slope:', slope);\par
+\par
+//-------------------------------UNSUPERVISED CLASSIFICATION-----------------------------------------------\par
+\par
+// Make the training dataset.\par
+var training = datasetClippedBand.sample(\{\par
+  region: capetown,\par
+  scale: 500,\par
+  numPixels: 10000\par
+\});\par
+\par
+// Train the clusterer:\par
+var clusterer = ee.Clusterer.wekaKMeans(\{nClusters: 5, \par
+                                          init: 2,\par
+                                          distanceFunction:'Manhattan',\par
+                                          maxIterations: 10\}).train(training);\par
+\par
+// Run the trained clusterer on the input data.\par
+var output = datasetClippedBand.cluster(clusterer);\par
+\par
+// Display the clusters with random colors.\par
+//Map.addLayer(output.randomVisualizer(), \{\}, 'Kmeans Unsupervised Classification');\par
+print('Results of the Unsupervised Classification:', output);\par
+\par
+//Change detection\par
+// Select the images for the start and end date:\par
+var studyRegion = ee.FeatureCollection (table)\par
+              .filter(ee.Filter.eq('MN_NAME', 'City of Cape Town'))\par
+              .geometry();\par
+\par
+// Load and preprocess Sentinel-2 images\par
+var getImage = function(start, end) \{\par
+    return ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')\par
+        .filterDate(start, end)\par
+        .filter(ee.Filter.bounds(studyRegion))\par
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))\par
+        .map(maskS2clouds)\par
+        .select(['B8', 'B12'])\par
+        .median()  // Use median instead of .first() for a cleaner image\par
+        .clip(studyRegion)\par
+        .divide(50000);  // Normalize values\par
+\};\par
+\par
+// Get pre- and post-fire images\par
+var preFire = getImage('2021-01-01', '2021-04-17');\par
+var postFire = getImage('2021-05-01', '2021-12-31');\par
+\par
+// Compute Normalized Burn Ratio (NBR)\par
+var nbr = function(image) \{\par
+    return image.normalizedDifference(['B8', 'B12']);\par
+\};\par
+\par
+var nbrPre = nbr(preFire).rename('NBR_Pre');\par
+var nbrPost = nbr(postFire).rename('NBR_Post');\par
+var dnbr = nbrPre.subtract(nbrPost).rename('dNBR');\par
+\par
+// Visualization parameters\par
+var vizParams = \{min: -0.2, max: 1, palette: ['blue', 'white', 'red']\};\par
+var dnbrViz = \{min: -0.3, max: 1, palette: ['green', 'yellow', 'orange', 'red', 'black']\};\par
+\par
+// Add layers to the map\par
+Map.centerObject(studyRegion, 10);\par
+Map.addLayer(nbrPre, vizParams, 'Pre-Fire NBR');\par
+Map.addLayer(nbrPost, vizParams, 'Post-Fire NBR');\par
+Map.addLayer(dnbr, dnbrViz, 'Burn Severity (dNBR)');\par
+}
+ 
